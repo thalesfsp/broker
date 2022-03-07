@@ -1,12 +1,23 @@
+// Copyright 2022 The broker Authors. All rights reserved.
+// Use of this source code is governed by a MIT
+// license that can be found in the LICENSE file.
+
 package broker_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/thalesfsp/broker"
 	"github.com/thalesfsp/broker/listener"
 )
+
+//////
+// A data structure to be sent as an event.
+//////
 
 // Machine state, could be anything.
 type Machine struct {
@@ -14,31 +25,84 @@ type Machine struct {
 	State string
 }
 
+//////
+// Golang's built-in example mechanism requires writing to output. The example
+// will be using multiple goroutines. A "safe" buffer is needed.
+//////
+
+// Buffer is a goroutine safe `bytes.Buffer`.
+type Buffer struct {
+	buffer bytes.Buffer
+	mutex  sync.Mutex
+}
+
+// Write appends the contents of p to the buffer, growing the buffer as needed. It returns
+// the number of bytes written.
+func (s *Buffer) Write(p []byte) (n int, err error) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.buffer.Write(p)
+}
+
+// String returns the contents of the unread portion of the buffer
+// as a string.  If the Buffer is a nil pointer, it returns "<nil>".
+func (s *Buffer) String() string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	return s.buffer.String()
+}
+
+// Expected What's the `Expectation` for `Text` in the safe buffer.
+type Expected struct {
+	// Expectation if `text` is expected or not.
+	Expectation bool
+
+	// Text expected.
+	Text string
+}
+
+// Contains check if `expected` is expected in the safe buffer.
+func (s *Buffer) Contains(expected ...Expected) []bool {
+	accumulator := []bool{}
+
+	for _, expectation := range expected {
+		accumulator = append(
+			accumulator,
+			strings.Contains(s.String(), expectation.Text) == expectation.Expectation,
+		)
+	}
+
+	return accumulator
+}
+
+//////
+// Example starts here.
+//////
+
 // Starts everything.
 func ExampleNew() {
-	fmt.Println("Started...")
-
 	//////
-	// Broker
+	// Broker setup, and start.
 	//////
 
 	b := broker.New()
 
 	go b.Start()
 
-	time.Sleep(1 * time.Second)
+	//////
+	// Listeners setup, and start.
+	//////
 
-	//////
-	// Listeners
-	//////
+	// Safe buffer where output will be written.
+	stringBuffer := &Buffer{
+		buffer: bytes.Buffer{},
+	}
 
 	l1 := listener.New("l1", func(event interface{}) {
 		tunnel, ok := event.(Machine)
 
 		if ok {
-			fmt.Printf("l1 Current tunnel status is %+v\n", tunnel.State)
-		} else {
-			fmt.Println("Not a tunnel, doing nothing")
+			fmt.Fprintf(stringBuffer, "l1 -> tunnel status: %s\n", tunnel.State)
 		}
 	})
 
@@ -46,9 +110,7 @@ func ExampleNew() {
 		tunnel, ok := event.(Machine)
 
 		if ok {
-			fmt.Printf("l2 Current tunnel status is %+v\n", tunnel.State)
-		} else {
-			fmt.Println("Not a tunnel, doing nothing")
+			fmt.Fprintf(stringBuffer, "l2 -> tunnel status: %s\n", tunnel.State)
 		}
 	})
 
@@ -56,9 +118,7 @@ func ExampleNew() {
 		tunnel, ok := event.(Machine)
 
 		if ok {
-			fmt.Printf("l3 Current tunnel status is %+v\n", tunnel.State)
-		} else {
-			fmt.Println("Not a tunnel, doing nothing")
+			fmt.Fprintf(stringBuffer, "l3 -> tunnel status: %s\n", tunnel.State)
 		}
 	})
 
@@ -71,8 +131,6 @@ func ExampleNew() {
 	b.Subscribe(l2)
 
 	b.Subscribe(l3)
-
-	time.Sleep(1 * time.Second)
 
 	//////
 	// Simulates publishing.
@@ -89,15 +147,14 @@ func ExampleNew() {
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
+	// Fake time.
+	time.Sleep(500 * time.Millisecond)
 
 	b.Stop()
 
-	time.Sleep(1 * time.Second)
-
 	// Start publishing messages:
 	go func() {
-		states := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z"}
+		states := []string{"off", "on"}
 
 		for _, state := range states {
 			b.Publish(Machine{State: state})
@@ -106,11 +163,20 @@ func ExampleNew() {
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
+	// Fake time.
+	time.Sleep(500 * time.Millisecond)
+
+	//////
+	// Simulates unsubscribing listeners.
+	//////
+
+	go b.Unsubscribe(l2.GetChannel())
+	go b.Unsubscribe(l3.GetChannel())
+
+	// Fake time.
+	time.Sleep(500 * time.Millisecond)
 
 	go b.Start()
-
-	time.Sleep(1 * time.Second)
 
 	// Start publishing messages:
 	go func() {
@@ -123,21 +189,27 @@ func ExampleNew() {
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
+	// Fake time.
+	time.Sleep(500 * time.Millisecond)
 
 	b.Stop()
 
-	time.Sleep(1 * time.Second)
+	fmt.Println(stringBuffer.Contains(
+		Expected{Text: "l1 -> tunnel status: off", Expectation: true},
+		Expected{Text: "l1 -> tunnel status: off", Expectation: true},
+		Expected{Text: "l1 -> tunnel status: on", Expectation: true},
+		Expected{Text: "l1 -> tunnel status: ping", Expectation: true},
+		Expected{Text: "l1 -> tunnel status: pong", Expectation: true},
+		Expected{Text: "l2 -> tunnel status: off", Expectation: true},
+		Expected{Text: "l2 -> tunnel status: on", Expectation: true},
+		Expected{Text: "l2 -> tunnel status: ping", Expectation: false},
+		Expected{Text: "l2 -> tunnel status: pong", Expectation: false},
+		Expected{Text: "l3 -> tunnel status: off", Expectation: true},
+		Expected{Text: "l3 -> tunnel status: on", Expectation: true},
+		Expected{Text: "l3 -> tunnel status: ping", Expectation: false},
+		Expected{Text: "l3 -> tunnel status: pong", Expectation: false},
+	))
 
 	// output:
-	// 1
-	// l1 setup with success
-	// l2 setup with success
-	// l3 setup with success
-	// Current tunnel status is off
-	// Current tunnel status is off
-	// Current tunnel status is off
-	// Current tunnel status is on
-	// Current tunnel status is on
-	// Current tunnel status is on
+	// [true true true true true true true true true true true true true]
 }

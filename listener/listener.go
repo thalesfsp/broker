@@ -1,3 +1,7 @@
+// Copyright 2022 The broker Authors. All rights reserved.
+// Use of this source code is governed by a MIT
+// license that can be found in the LICENSE file.
+
 package listener
 
 // OnEventFunc defines what to do when a `Listener` receives an event.
@@ -7,6 +11,10 @@ type OnEventFunc func(event interface{})
 type IListener interface {
 	// GetName returns the name of the `Listener`.
 	GetName() string
+
+	// GetChannel returns the communication channel used between the `Broker`
+	// and the `Listener`.
+	GetChannel() chan interface{}
 
 	// SetChannel sets the communication channel between a `Broker` and a
 	// `Listener`.
@@ -31,6 +39,12 @@ type Listener struct {
 // GetName returns the name of the listener.
 func (s *Listener) GetName() string {
 	return s.Name
+}
+
+// GetChannel returns the communication channel used between the `Broker`
+// and the `Listener`.
+func (s *Listener) GetChannel() chan interface{} {
+	return s.Ch
 }
 
 // SetChannel sets the communication channel between a `Broker` and a

@@ -2,6 +2,5 @@
 // Use of this source code is governed by a MIT
 // license that can be found in the LICENSE file.
 
-module github.com/thalesfsp/broker
-
-go 1.17
+// Package broker provides everything needed to broadcast events to `Listener`s.
+package broker
